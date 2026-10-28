@@ -1,0 +1,181 @@
+import datetime
+import math
+import os
+import threading
+import time
+import webbrowser
+import win32com.client  # Direct Windows speech API
+import ollama
+import pygame
+import speech_recognition as sr
+
+# Global state for animation
+is_speaking = False
+running = True
+
+
+def speak(text):
+    global is_speaking
+    print(f"\nAI Hologram: {text}\n")
+    is_speaking = True
+
+    # Use native Windows SAPI engine for reliable audio output
+    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+    speaker.Speak(text)
+
+    is_speaking = False
+
+
+def draw_hologram():
+    global is_speaking, running
+    pygame.init()
+    screen = pygame.display.set_mode((400, 400))
+    pygame.display.set_caption("Hologram AI Visualizer")
+    clock = pygame.time.Clock()
+
+    angle = 0.0
+
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+                return
+
+        screen.fill((5, 10, 20))  # Dark ambient background
+
+        # Rotation speed accelerates when speaking
+        speed = 0.08 if is_speaking else 0.02
+        angle += speed
+
+        # Color shifts based on speaking state (Orange when speaking, Cyan when idle)
+        core_color = (255, 100, 50) if is_speaking else (0, 220, 255)
+        outer_color = (200, 50, 20) if is_speaking else (0, 120, 200)
+
+        center = (200, 200)
+
+        # 1. Inner solid glowing core with a breathing pulse
+        core_radius = 25 + int(
+            math.sin(time.time() * 8) * 5
+            if is_speaking
+            else math.sin(time.time() * 2) * 2
+        )
+        pygame.draw.circle(screen, core_color, center, core_radius)
+
+        # 2. Rotating inner ring arcs
+        rect_inner = pygame.Rect(140, 140, 120, 120)
+        pygame.draw.arc(screen, outer_color, rect_inner, angle, angle + 2.5, 3)
+        pygame.draw.arc(
+            screen, outer_color, rect_inner, angle + 3.14, angle + 5.64, 3
+        )
+
+        # 3. Counter-rotating outer HUD ring arcs
+        rect_outer = pygame.Rect(110, 110, 180, 180)
+        pygame.draw.arc(
+            screen, core_color, rect_outer, -angle * 1.5, -angle * 1.5 + 1.8, 2
+        )
+        pygame.draw.arc(
+            screen,
+            core_color,
+            rect_outer,
+            -angle * 1.5 + 3.14,
+            -angle * 1.5 + 4.94,
+            2,
+        )
+
+        # 4. Static target crosshairs
+        pygame.draw.line(screen, (40, 70, 100), (200, 80), (200, 100), 2)
+        pygame.draw.line(screen, (40, 70, 100), (200, 300), (200, 320), 2)
+        pygame.draw.line(screen, (40, 70, 100), (80, 200), (100, 200), 2)
+        pygame.draw.line(screen, (40, 70, 100), (300, 200), (320, 200), 2)
+
+        pygame.display.flip()
+        clock.tick(60)
+
+    pygame.quit()
+
+
+def listen():
+    recognizer = sr.Recognizer()
+    recognizer.energy_threshold = 100
+    recognizer.dynamic_energy_threshold = True
+    recognizer.pause_threshold = 1.2
+
+    with sr.Microphone() as source:
+        print("\nListening... Speak into your microphone.")
+        recognizer.adjust_for_ambient_noise(source, duration=0.5)
+        try:
+            audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+        except sr.WaitTimeoutError:
+            return None
+
+    try:
+        text = recognizer.recognize_google(audio)
+        print(f"You said: {text}")
+        return text
+    except sr.UnknownValueError:
+        return None
+    except sr.RequestError as e:
+        print(f"Speech Recognition error: {e}")
+        return None
+
+
+def ask_ollama(prompt):
+    response = ollama.chat(
+        model="llama3.2",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a holographic AI assistant. Keep responses brief.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+    )
+    return response["message"]["content"]
+
+
+def main_loop():
+    global running
+    time.sleep(1)
+    speak("Hologram AI online. Systems ready.")
+
+    while running:
+        user_speech = listen()
+
+        if user_speech:
+            cmd = user_speech.lower()
+
+            # Custom Voice Commands
+            if "exit" in cmd or "quit" in cmd:
+                speak("Shutting down. Goodbye!")
+                running = False
+                break
+
+            elif "time" in cmd:
+                current_time = datetime.datetime.now().strftime("%I:%M %p")
+                speak(f"The current time is {current_time}.")
+
+            elif "open youtube" in cmd:
+                speak("Opening YouTube.")
+                webbrowser.open("https://www.youtube.com")
+
+            elif "open google" in cmd:
+                speak("Opening Google.")
+                webbrowser.open("https://www.google.com")
+
+            elif "notepad" in cmd:
+                speak("Opening Notepad.")
+                os.system("notepad")
+
+            # Fallback to Ollama AI
+            else:
+                reply = ask_ollama(user_speech)
+                speak(reply)
+
+
+if __name__ == "__main__":
+    # Run the Pygame visualizer in a background thread
+    visual_thread = threading.Thread(target=draw_hologram)
+    visual_thread.start()
+
+    # Run the speech loop in the main thread
+    main_loop()
